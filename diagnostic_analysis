@@ -1,0 +1,173 @@
+import pandas as pd
+import numpy as np
+from collections import Counter
+from datetime import datetime
+
+print("=== DIAGNOSTIC ANALYSIS FOR LOW RECALL ===\n")
+
+# Load data
+train_df = pd.read_csv('train.csv')
+test_df = pd.read_csv('test.csv')
+item_meta_df = pd.read_csv('item_meta.csv')
+sample_submission = pd.read_csv('submission_v3.csv')
+
+# Load your submission to analyze
+submission_df = pd.read_csv('submission_optimized.csv')
+
+print("1. TEMPORAL ANALYSIS OF TEST USERS")
+print("="*50)
+
+# Analyze temporal patterns for test users
+test_users = test_df['user_id'].unique()
+train_test_users = train_df[train_df['user_id'].isin(test_users)].copy()
+
+# Convert timestamps
+train_test_users['timestamp_dt'] = pd.to_datetime(train_test_users['timestamp'], unit='ms')
+max_time = train_df['timestamp'].max()
+min_time = train_df['timestamp'].min()
+
+# Check last interaction time for test users
+test_user_last_interaction = train_test_users.groupby('user_id')['timestamp'].max()
+test_user_last_interaction_dt = pd.to_datetime(test_user_last_interaction, unit='ms')
+
+print(f"Global time range: {pd.to_datetime(min_time, unit='ms')} to {pd.to_datetime(max_time, unit='ms')}")
+print(f"\nTest users' last interactions:")
+print(f"  Earliest: {test_user_last_interaction_dt.min()}")
+print(f"  Latest: {test_user_last_interaction_dt.max()}")
+print(f"  Mean: {test_user_last_interaction_dt.mean()}")
+
+# Check if test users are mostly old users
+days_since_last = (max_time - test_user_last_interaction) / 86400000
+print(f"\nDays since last interaction for test users:")
+print(f"  Mean: {days_since_last.mean():.1f} days")
+print(f"  Median: {days_since_last.median():.1f} days")
+print(f"  Min: {days_since_last.min():.1f} days")
+print(f"  Max: {days_since_last.max():.1f} days")
+
+print("\n2. TEST USER BEHAVIOR ANALYSIS")
+print("="*50)
+
+# Analyze test user patterns
+test_user_stats = train_test_users.groupby('user_id').agg({
+    'item_id': ['count', 'nunique'],
+    'timestamp': ['min', 'max']
+}).reset_index()
+test_user_stats.columns = ['user_id', 'total_interactions', 'unique_items', 'first_time', 'last_time']
+
+print(f"\nTest user interaction statistics:")
+print(f"  Mean interactions: {test_user_stats['total_interactions'].mean():.2f}")
+print(f"  Median interactions: {test_user_stats['total_interactions'].median():.2f}")
+print(f"  Users with 1 interaction: {(test_user_stats['total_interactions'] == 1).sum()} ({(test_user_stats['total_interactions'] == 1).sum()/len(test_user_stats)*100:.1f}%)")
+
+# Check category preferences of test users
+test_user_items = train_test_users.merge(item_meta_df[['item_id', 'main_category', 'average_rating']], on='item_id', how='left')
+test_category_dist = test_user_items['main_category'].value_counts()
+print(f"\nTest users' category distribution:")
+for cat, count in test_category_dist.items():
+    print(f"  {cat}: {count} ({count/len(test_user_items)*100:.1f}%)")
+
+print("\n3. POPULARITY PATTERN ANALYSIS")
+print("="*50)
+
+# Check if test users prefer popular or niche items
+item_popularity = train_df['item_id'].value_counts()
+test_user_items['item_popularity'] = test_user_items['item_id'].map(item_popularity)
+
+print(f"\nPopularity of items that test users interacted with:")
+print(f"  Mean popularity: {test_user_items['item_popularity'].mean():.2f}")
+print(f"  Median popularity: {test_user_items['item_popularity'].median():.2f}")
+
+# Compare with overall
+print(f"\nOverall item popularity:")
+print(f"  Mean: {item_popularity.mean():.2f}")
+print(f"  Median: {item_popularity.median():.2f}")
+
+# Check if test users like high-rated items
+print(f"\nRating preference of test users:")
+print(f"  Mean rating: {test_user_items['average_rating'].mean():.2f}")
+print(f"  % items with rating >= 4.0: {(test_user_items['average_rating'] >= 4.0).sum() / len(test_user_items) * 100:.1f}%")
+
+print("\n4. SUBMISSION ANALYSIS")
+print("="*50)
+
+# Analyze what we're recommending
+all_recommended_items = []
+for _, row in submission_df.iterrows():
+    items = [int(x) for x in row['item_id'].split(',')]
+    all_recommended_items.extend(items)
+
+recommended_counter = Counter(all_recommended_items)
+print(f"\nRecommendation statistics:")
+print(f"  Total unique items recommended: {len(set(all_recommended_items))}")
+print(f"  Most recommended items:")
+for item, count in recommended_counter.most_common(10):
+    pop = item_popularity.get(item, 0)
+    print(f"    Item {item}: recommended {count} times (popularity: {pop})")
+
+print("\n5. POTENTIAL ISSUES DIAGNOSIS")
+print("="*50)
+
+# Check if we're recommending items that don't exist
+all_train_items = set(train_df['item_id'].unique())
+recommended_not_in_train = set(all_recommended_items) - all_train_items
+if recommended_not_in_train:
+    print(f"WARNING: Recommending {len(recommended_not_in_train)} items not in training data!")
+
+# Check temporal bias
+rec_items_df = pd.DataFrame({'item_id': list(set(all_recommended_items))})
+rec_items_stats = train_df[train_df['item_id'].isin(rec_items_df['item_id'])].groupby('item_id')['timestamp'].agg(['min', 'max', 'count'])
+rec_items_stats['days_since_first'] = (max_time - rec_items_stats['min']) / 86400000
+rec_items_stats['days_since_last'] = (max_time - rec_items_stats['max']) / 86400000
+
+print(f"\nTemporal characteristics of recommended items:")
+print(f"  Avg days since first appearance: {rec_items_stats['days_since_first'].mean():.1f}")
+print(f"  Avg days since last appearance: {rec_items_stats['days_since_last'].mean():.1f}")
+
+print("\n6. HYPOTHESIS TESTING")
+print("="*50)
+
+# Hypothesis 1: Test set might be a specific time period
+print("Hypothesis 1: Test set is from a specific future time period")
+print("  If true: We should recommend newer items, not just recent popular")
+
+# Hypothesis 2: Test set might be specific user types
+print("\nHypothesis 2: Test set contains specific user segments")
+test_user_segments = []
+for user in test_users[:20]:  # Sample
+    hist = train_test_users[train_test_users['user_id'] == user]
+    interactions = len(hist)
+    days_active = (hist['timestamp'].max() - hist['timestamp'].min()) / 86400000
+    test_user_segments.append({
+        'user': user,
+        'interactions': interactions,
+        'days_active': days_active,
+        'items_per_day': interactions / (days_active + 1)
+    })
+test_seg_df = pd.DataFrame(test_user_segments)
+print(f"  Sample test users activity rate: {test_seg_df['items_per_day'].mean():.3f} items/day")
+
+# Hypothesis 3: Category shift
+print("\nHypothesis 3: Test users might have category preferences")
+print("  Checking if Premium Beauty is underrepresented in recommendations...")
+
+print("\n7. ALTERNATIVE STRATEGY SUGGESTIONS")
+print("="*50)
+
+print("Based on the analysis, try these approaches:")
+print("1. If test is future data: Focus on NEW items (first seen recently)")
+print("2. If test has specific patterns: Use only test users' training data")
+print("3. Consider item lifecycle: Items that are growing in popularity")
+print("4. Check sequence patterns: Last item → next item associations")
+print("5. Use collaborative filtering only on test users subset")
+
+# Save diagnostic data
+diagnostic_data = {
+    'test_users_count': len(test_users),
+    'test_users_avg_interactions': test_user_stats['total_interactions'].mean(),
+    'test_users_avg_days_since_last': days_since_last.mean(),
+    'recommended_unique_items': len(set(all_recommended_items)),
+    'most_recommended_item': recommended_counter.most_common(1)[0] if recommended_counter else None
+}
+
+print("\n" + "="*50)
+print("DIAGNOSTIC COMPLETE - Share this output for targeted solution!")

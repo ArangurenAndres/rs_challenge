@@ -1,0 +1,2 @@
+n_users_train,n_items_train,n_interactions,n_test_users,n_cold_start_users,avg_interactions_per_user,avg_interactions_per_item,top_category,time_span_days,sparsity
+323625,65295,350074,1836,0,1.0817273078408651,5.361421242055288,All Beauty,7297,0.9999834332290705
