@@ -1,0 +1,15 @@
+# Ignore all .dat files in data/
+data/*.dat
+models/*.pt
+# Ignore all .jpg images (anywhere in the repo)
+*.jpg
+
+# Ignore all .pt model files (anywhere in the repo)
+*.pt
+
+# (Optional) Add other common formats you might want to ignore
+*.png
+*.jpeg
+*.pkl
+
+venv/
